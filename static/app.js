@@ -13,6 +13,7 @@ const sweeps=[
 
 const CAPTURE_SECONDS=7,FRAME_INTERVAL_MS=240,SELECTED=12,MAX_WIDTH=1280;
 let stream=null,step=0,capturing=false,loopId=null,prevGray=null,currentScanId=null,pollTimer=null;
+let cameraFacing="environment";
 const results={};
 const $=id=>document.getElementById(id),video=$("video"),overlay=$("overlay"),octx=overlay.getContext("2d"),work=$("work"),wctx=work.getContext("2d",{willReadFrequently:true});
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v)),sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -27,9 +28,79 @@ function render(){
 async function startCamera(){
  try{
   if(stream)stream.getTracks().forEach(t=>t.stop());
-  stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:1920},height:{ideal:1080}},audio:false});
-  video.srcObject=stream;await video.play();$("quality").textContent="Camera ready.";$("startSweepBtn").disabled=false;qualityLoop();
- }catch(e){$("quality").textContent="Camera failed. Allow camera access and use HTTPS.";console.error(e)}
+  stream=null;
+  prevGray=null;
+
+  const constraints={
+    video:{
+      facingMode:{ideal:cameraFacing},
+      width:{ideal:1920},
+      height:{ideal:1080}
+    },
+    audio:false
+  };
+
+  stream=await navigator.mediaDevices.getUserMedia(constraints);
+  video.srcObject=stream;
+  await video.play();
+
+  const track=stream.getVideoTracks()[0];
+  const settings=track?.getSettings?.()||{};
+  const actualFacing=settings.facingMode||cameraFacing;
+
+  document.querySelector(".camera-wrap").classList.toggle(
+    "front-camera",
+    actualFacing==="user" || cameraFacing==="user"
+  );
+
+  $("cameraModeLabel").textContent=
+    (actualFacing==="user" || cameraFacing==="user")
+      ? "Front/selfie camera selected"
+      : "Back camera selected";
+
+  $("switchCameraBtn").textContent=
+    cameraFacing==="user"
+      ? "Use back camera"
+      : "Use front camera";
+
+  $("quality").textContent=
+    cameraFacing==="user"
+      ? "Front camera ready. For best 3D detail, use bright lighting and keep the phone steady."
+      : "Back camera ready. This is the recommended camera for dental scans.";
+
+  $("startSweepBtn").disabled=false;
+  qualityLoop();
+ }catch(e){
+  console.error(e);
+  $("quality").textContent=
+    "Camera failed. Allow camera access and use HTTPS. If this phone has only one camera available to the browser, switch back and try again.";
+  $("startSweepBtn").disabled=true;
+ }
+}
+
+async function switchCamera(){
+ if(capturing)return;
+
+ cameraFacing=cameraFacing==="environment" ? "user" : "environment";
+
+ $("cameraModeLabel").textContent=
+   cameraFacing==="user"
+     ? "Front/selfie camera selected"
+     : "Back camera selected";
+
+ $("switchCameraBtn").textContent=
+   cameraFacing==="user"
+     ? "Use back camera"
+     : "Use front camera";
+
+ if(stream){
+   await startCamera();
+ }else{
+   document.querySelector(".camera-wrap").classList.toggle(
+     "front-camera",
+     cameraFacing==="user"
+   );
+ }
 }
 
 function smallFrame(){
@@ -78,7 +149,7 @@ async function runSweep(){
  if(!stream||capturing)return;capturing=true;prevGray=null;render();await countdown();const frames=[],started=performance.now();let index=0;$("quality").textContent="Scanning — keep the same teeth visible between nearby frames.";
  while(performance.now()-started<CAPTURE_SECONDS*1000){const f=fullFrame();if(f){f.index=index++;f.tMs=Math.round(performance.now()-started);frames.push(f);updateMeters(f.metrics)}await sleep(FRAME_INTERVAL_MS)}
  const selected=choose(frames),avg=k=>selected.reduce((s,f)=>s+(f.metrics?.[k]||0),0)/Math.max(1,selected.length);
- results[sweeps[step].key]={key:sweeps[step].key,title:sweeps[step].title,capturedAt:new Date().toISOString(),rawFrameCount:frames.length,selectedFrameCount:selected.length,averageQualityScore:+avg("score").toFixed(1),frames:selected};
+ results[sweeps[step].key]={key:sweeps[step].key,title:sweeps[step].title,cameraFacing,capturedAt:new Date().toISOString(),rawFrameCount:frames.length,selectedFrameCount:selected.length,averageQualityScore:+avg("score").toFixed(1),frames:selected};
  capturing=false;$("quality").textContent="Sweep saved.";render();
 }
 
@@ -95,7 +166,7 @@ function renderThumbs(){
 }
 
 function packageData(){
- return{format:"dscan-v4",version:4,createdAt:new Date().toISOString(),captureMethod:"overlap-guided smartphone sweeps",intendedUse:"experimental reconstruction and dentist review",captureGraph:{anchor:"bite_registration",intendedOverlaps:[["bite_registration","front_arc"],["front_arc","right_outer"],["front_arc","left_outer"],["front_arc","upper_bridge"],["front_arc","lower_bridge"],["upper_bridge","upper_biting"],["upper_bridge","upper_inside"],["lower_bridge","lower_biting"],["lower_bridge","lower_inside"],["bite_registration","upper_bridge"],["bite_registration","lower_bridge"]]},sweeps:sweeps.map(s=>results[s.key]||{key:s.key,title:s.title,missing:true})};
+ return{format:"dscan-v4",version:4,createdAt:new Date().toISOString(),captureMethod:"overlap-guided smartphone sweeps",cameraSupport:["environment","user"],intendedUse:"experimental reconstruction and dentist review",captureGraph:{anchor:"bite_registration",intendedOverlaps:[["bite_registration","front_arc"],["front_arc","right_outer"],["front_arc","left_outer"],["front_arc","upper_bridge"],["front_arc","lower_bridge"],["upper_bridge","upper_biting"],["upper_bridge","upper_inside"],["lower_bridge","lower_biting"],["lower_bridge","lower_inside"],["bite_registration","upper_bridge"],["bite_registration","lower_bridge"]]},sweeps:sweeps.map(s=>results[s.key]||{key:s.key,title:s.title,missing:true})};
 }
 
 function downloadPackage(){
@@ -123,4 +194,4 @@ async function pollStatus(){
  pollTimer=setTimeout(pollStatus,4000);
 }
 
-$("startCameraBtn").addEventListener("click",startCamera);$("startSweepBtn").addEventListener("click",runSweep);$("redoBtn").addEventListener("click",redo);$("nextBtn").addEventListener("click",next);$("downloadBtn").addEventListener("click",downloadPackage);$("submitBtn").addEventListener("click",submitScan);render();
+$("startCameraBtn").addEventListener("click",startCamera);$("switchCameraBtn").addEventListener("click",switchCamera);$("startSweepBtn").addEventListener("click",runSweep);$("redoBtn").addEventListener("click",redo);$("nextBtn").addEventListener("click",next);$("downloadBtn").addEventListener("click",downloadPackage);$("submitBtn").addEventListener("click",submitScan);render();

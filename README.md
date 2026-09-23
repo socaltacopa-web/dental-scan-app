@@ -16,6 +16,17 @@ This project is packaged so you can put the files directly into a GitHub reposit
 - Railway `Dockerfile`
 - Railway health-check config
 
+
+## Front and back camera support
+
+The capture page now lets the user switch between:
+
+- **Back camera** — recommended because it is usually sharper and has better close-focus performance.
+- **Front/selfie camera** — useful when scanning yourself because you can see the screen while positioning the phone.
+
+The front-camera preview is mirrored for easier positioning, but captured image data is kept in the camera's normal orientation for reconstruction.
+
+
 ## Important
 
 This is **research/prototype software**. Do not use it for diagnosis, treatment planning, measurements, crowns, aligners, dentures, surgical guides, or fabrication.

@@ -1,8 +1,0 @@
-{
-  "name": "dental-scan-railway",
-  "version": "0.1.0",
-  "entrypoint": "app.main:app",
-  "healthcheck": "/health",
-  "storage": "RAILWAY_VOLUME_MOUNT_PATH or DATA_DIR",
-  "prototype_only": true
-}
