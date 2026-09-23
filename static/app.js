@@ -1,0 +1,126 @@
+const sweeps=[
+{key:"bite_registration",title:"Bite registration",arrow:"↔",hint:"Bring the teeth together gently in the normal bite and scan across the front.",overlap:"Main upper-to-lower alignment anchor."},
+{key:"front_arc",title:"Front outer arc",arrow:"→",hint:"Sweep slowly across the front teeth.",overlap:"Keep the central incisors visible for several frames."},
+{key:"right_outer",title:"Right outer side",arrow:"↗",hint:"Start near the front teeth and move toward the right molars.",overlap:"Begin with the same front teeth seen in the front scan."},
+{key:"left_outer",title:"Left outer side",arrow:"↖",hint:"Start near the front teeth and move toward the left molars.",overlap:"Begin with the same front teeth seen in the front scan."},
+{key:"upper_biting",title:"Upper biting surfaces",arrow:"→",hint:"Tilt upward and sweep across the upper biting surfaces.",overlap:"Keep upper front incisors visible while changing angle."},
+{key:"lower_biting",title:"Lower biting surfaces",arrow:"→",hint:"Tilt downward and sweep across the lower biting surfaces.",overlap:"Keep lower front incisors visible while changing angle."},
+{key:"upper_inside",title:"Upper inside surfaces",arrow:"→",hint:"Scan behind the upper teeth along the palate-side surfaces.",overlap:"Start on the same upper incisors seen in the bridge sweep."},
+{key:"lower_inside",title:"Lower inside surfaces",arrow:"→",hint:"Lift the tongue if possible and scan the tongue-side surfaces.",overlap:"Start on the same lower incisors seen in the bridge sweep."},
+{key:"upper_bridge",title:"Upper bridge sweep",arrow:"↻",hint:"Keep upper front incisors centered while rolling from outer view toward biting/inside view.",overlap:"Connects upper outer, biting, and inside scans."},
+{key:"lower_bridge",title:"Lower bridge sweep",arrow:"↺",hint:"Keep lower front incisors centered while rolling from outer view toward biting/inside view.",overlap:"Connects lower outer, biting, and inside scans."}
+];
+
+const CAPTURE_SECONDS=7,FRAME_INTERVAL_MS=240,SELECTED=12,MAX_WIDTH=1280;
+let stream=null,step=0,capturing=false,loopId=null,prevGray=null,currentScanId=null,pollTimer=null;
+const results={};
+const $=id=>document.getElementById(id),video=$("video"),overlay=$("overlay"),octx=overlay.getContext("2d"),work=$("work"),wctx=work.getContext("2d",{willReadFrequently:true});
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v)),sleep=ms=>new Promise(r=>setTimeout(r,ms));
+
+function render(){
+ const s=sweeps[step],done=!!results[s.key];
+ $("stepLabel").textContent=`Sweep ${step+1} of ${sweeps.length}`;$("sweepTitle").textContent=s.title;$("sweepHint").textContent=s.hint;$("overlapHint").textContent=`Alignment tip: ${s.overlap}`;$("directionArrow").textContent=s.arrow;$("progress").value=step+1;$("progress").max=sweeps.length;
+ $("redoBtn").disabled=!done||capturing;$("nextBtn").disabled=!done||capturing;$("startSweepBtn").disabled=!stream||capturing;
+ updateCoverage();renderThumbs();const any=Object.keys(results).length>0;$("downloadBtn").disabled=!any;$("submitBtn").disabled=!any;
+}
+
+async function startCamera(){
+ try{
+  if(stream)stream.getTracks().forEach(t=>t.stop());
+  stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:1920},height:{ideal:1080}},audio:false});
+  video.srcObject=stream;await video.play();$("quality").textContent="Camera ready.";$("startSweepBtn").disabled=false;qualityLoop();
+ }catch(e){$("quality").textContent="Camera failed. Allow camera access and use HTTPS.";console.error(e)}
+}
+
+function smallFrame(){
+ if(!video.videoWidth)return null;const W=256,H=Math.round(W*video.videoHeight/video.videoWidth);work.width=W;work.height=H;wctx.drawImage(video,0,0,W,H);return wctx.getImageData(0,0,W,H);
+}
+
+function hsv(r,g,b){r/=255;g/=255;b/=255;const mx=Math.max(r,g,b),mn=Math.min(r,g,b),d=mx-mn;let h=0;if(d){if(mx===r)h=60*(((g-b)/d)%6);else if(mx===g)h=60*(((b-r)/d)+2);else h=60*(((r-g)/d)+4)}if(h<0)h+=360;return[h,mx===0?0:d/mx,mx]}
+
+function analyze(im,prev){
+ const{data,width,height}=im,gray=new Float32Array(width*height),mask=new Uint8Array(width*height);let sum=0,sum2=0,teeth=0,n=0;
+ for(let p=0,i=0;i<data.length;i+=4,p++){const r=data[i],g=data[i+1],b=data[i+2],y=.2126*r+.7152*g+.0722*b;gray[p]=y;sum+=y;sum2+=y*y;const[,s,v]=hsv(r,g,b),red=r-(g+b)/2;if(v>.56&&s<.42&&red<48){mask[p]=255;teeth++}n++}
+ const mean=sum/n,contrast=Math.sqrt(Math.max(0,sum2/n-mean*mean));let ls=0,ln=0;
+ for(let y=1;y<height-1;y+=2)for(let x=1;x<width-1;x+=2){const i=y*width+x,l=4*gray[i]-gray[i-1]-gray[i+1]-gray[i-width]-gray[i+width];ls+=l*l;ln++}
+ const sharp=Math.sqrt(ls/Math.max(1,ln));let motion=0;if(prev&&prev.length===gray.length){let d=0,c=0;for(let i=0;i<gray.length;i+=16){d+=Math.abs(gray[i]-prev[i]);c++}motion=d/Math.max(1,c)}
+ const light=clamp(100-Math.abs(mean-135)*.9,0,100),sharpScore=clamp((sharp-8)*4.2,0,100),teethScore=clamp((teeth/n-.04)*500,0,100),motionScore=prev?clamp(100-Math.abs(motion-10)*7,0,100):50,score=.27*light+.29*sharpScore+.29*teethScore+.15*motionScore;
+ return{gray,mask,width,height,lightScore:light,sharpScore,teethScore,motionScore,motion,score};
+}
+
+function updateMeters(m){
+ $("lightMeter").value=m.lightScore;$("sharpMeter").value=m.sharpScore;$("teethMeter").value=m.teethScore;$("motionMeter").value=m.motionScore;
+ let text="Good — keep overlap";if(m.lightScore<40)text="Improve lighting";else if(m.sharpScore<32)text="Hold steadier";else if(m.teethScore<28)text="Center more teeth";else if(m.motion>21)text="Move slower";else if(m.motion>0&&m.motion<3)text="Move a little";$("livePrompt").textContent=text;
+}
+
+function drawMask(m){
+ if(!video.videoWidth)return;overlay.width=video.videoWidth;overlay.height=video.videoHeight;const c=document.createElement("canvas");c.width=m.width;c.height=m.height;const cx=c.getContext("2d"),img=cx.createImageData(m.width,m.height);
+ for(let p=0;p<m.mask.length;p++){const i=p*4;img.data[i]=60;img.data[i+1]=210;img.data[i+2]=120;img.data[i+3]=m.mask[p]?68:0}cx.putImageData(img,0,0);octx.clearRect(0,0,overlay.width,overlay.height);octx.drawImage(c,0,0,overlay.width,overlay.height);
+}
+
+function qualityLoop(){
+ cancelAnimationFrame(loopId);const f=()=>{if(stream&&!capturing){const im=smallFrame();if(im){const m=analyze(im,prevGray);prevGray=m.gray;updateMeters(m);drawMask(m)}}loopId=requestAnimationFrame(f)};loopId=requestAnimationFrame(f);
+}
+
+async function countdown(){const b=$("countdown");b.hidden=false;for(const n of[3,2,1]){b.textContent=n;await sleep(600)}b.textContent="GO";await sleep(350);b.hidden=true}
+
+function fullFrame(){
+ const sw=video.videoWidth,sh=video.videoHeight;if(!sw)return null;const scale=Math.min(1,MAX_WIDTH/sw),w=Math.round(sw*scale),h=Math.round(sh*scale),c=document.createElement("canvas");c.width=w;c.height=h;c.getContext("2d").drawImage(video,0,0,w,h);
+ const sm=256,smh=Math.round(sm*h/w);work.width=sm;work.height=smh;wctx.drawImage(c,0,0,sm,smh);const m=analyze(wctx.getImageData(0,0,sm,smh),prevGray);prevGray=m.gray;
+ return{dataUrl:c.toDataURL("image/jpeg",.84),width:w,height:h,metrics:{lightScore:+m.lightScore.toFixed(1),sharpScore:+m.sharpScore.toFixed(1),teethScore:+m.teethScore.toFixed(1),motionScore:+m.motionScore.toFixed(1),motion:+m.motion.toFixed(2),score:+m.score.toFixed(1)}};
+}
+
+function choose(frames){
+ if(frames.length<=SELECTED)return frames;const out=[];for(let b=0;b<SELECTED;b++){const a=Math.floor(b*frames.length/SELECTED),z=Math.max(a+1,Math.floor((b+1)*frames.length/SELECTED)),bin=frames.slice(a,z).sort((x,y)=>(y.metrics?.score||0)-(x.metrics?.score||0));if(bin[0])out.push(bin[0])}return out.sort((a,b)=>a.index-b.index);
+}
+
+async function runSweep(){
+ if(!stream||capturing)return;capturing=true;prevGray=null;render();await countdown();const frames=[],started=performance.now();let index=0;$("quality").textContent="Scanning — keep the same teeth visible between nearby frames.";
+ while(performance.now()-started<CAPTURE_SECONDS*1000){const f=fullFrame();if(f){f.index=index++;f.tMs=Math.round(performance.now()-started);frames.push(f);updateMeters(f.metrics)}await sleep(FRAME_INTERVAL_MS)}
+ const selected=choose(frames),avg=k=>selected.reduce((s,f)=>s+(f.metrics?.[k]||0),0)/Math.max(1,selected.length);
+ results[sweeps[step].key]={key:sweeps[step].key,title:sweeps[step].title,capturedAt:new Date().toISOString(),rawFrameCount:frames.length,selectedFrameCount:selected.length,averageQualityScore:+avg("score").toFixed(1),frames:selected};
+ capturing=false;$("quality").textContent="Sweep saved.";render();
+}
+
+function redo(){delete results[sweeps[step].key];$("quality").textContent="Sweep cleared.";render()}
+function next(){if(step<sweeps.length-1){step++;prevGray=null;render()}else{$("quality").textContent="Capture set complete."}}
+
+function updateCoverage(){
+ const done=sweeps.filter(s=>results[s.key]).length;$("coverageBadge").textContent=`${Math.round(done/sweeps.length*100)}% complete`;const g=$("coverageGrid");g.innerHTML="";
+ for(const s of sweeps){const d=document.createElement("div");d.className=`coverage-item ${results[s.key]?"done":""}`;d.innerHTML=`<strong>${s.title}</strong><span>${results[s.key]?"Done":"Missing"}</span>`;g.appendChild(d)}
+}
+
+function renderThumbs(){
+ const w=$("thumbs");w.innerHTML="";let total=0;for(const s of sweeps){const r=results[s.key];if(!r)continue;for(const f of r.frames.slice(0,3)){total++;const img=document.createElement("img");img.className="thumb";img.src=f.dataUrl;img.alt=s.title;w.appendChild(img)}}$("frameCount").textContent=`${total} preview frames`;
+}
+
+function packageData(){
+ return{format:"dscan-v4",version:4,createdAt:new Date().toISOString(),captureMethod:"overlap-guided smartphone sweeps",intendedUse:"experimental reconstruction and dentist review",captureGraph:{anchor:"bite_registration",intendedOverlaps:[["bite_registration","front_arc"],["front_arc","right_outer"],["front_arc","left_outer"],["front_arc","upper_bridge"],["front_arc","lower_bridge"],["upper_bridge","upper_biting"],["upper_bridge","upper_inside"],["lower_bridge","lower_biting"],["lower_bridge","lower_inside"],["bite_registration","upper_bridge"],["bite_registration","lower_bridge"]]},sweeps:sweeps.map(s=>results[s.key]||{key:s.key,title:s.title,missing:true})};
+}
+
+function downloadPackage(){
+ const blob=new Blob([JSON.stringify(packageData())],{type:"application/json"}),a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=`dental-scan-v4-${Date.now()}.dscan.json`;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+
+async function submitScan(){
+ $("submitBtn").disabled=true;$("serverStatus").textContent="Uploading scan…";$("artifactLinks").innerHTML="";
+ try{
+  const blob=new Blob([JSON.stringify(packageData())],{type:"application/json"}),form=new FormData();form.append("file",blob,"scan.dscan.json");form.append("case_name",$("caseName").value||"Untitled scan");
+  const res=await fetch("/api/scans",{method:"POST",body:form});const body=await res.json();if(!res.ok)throw new Error(body.detail||"Upload failed");
+  currentScanId=body.scan_id;$("serverStatus").textContent=`Uploaded. Scan ID: ${currentScanId}. Processing will continue on the server.`;pollStatus();
+ }catch(e){$("serverStatus").textContent=`Upload failed: ${e.message}`;$("submitBtn").disabled=false}
+}
+
+async function pollStatus(){
+ if(!currentScanId)return;clearTimeout(pollTimer);
+ try{
+  const res=await fetch(`/api/scans/${currentScanId}`),s=await res.json();$("serverStatus").textContent=`${s.status}: ${s.message||s.stage||""}`;
+  const links=$("artifactLinks");links.innerHTML="";
+  for(const a of s.artifacts||[]){const el=document.createElement("a");el.href=a.url;el.textContent=`Download ${a.name}`;links.appendChild(el)}
+  const merged=(s.artifacts||[]).find(a=>a.name==="merged_mouth.ply");if(merged){const el=document.createElement("a");el.href=`/viewer?scan=${encodeURIComponent(currentScanId)}`;el.textContent="Open merged 3D model viewer";links.appendChild(el)}
+  if(["completed","partial","failed"].includes(s.status)){$("submitBtn").disabled=false;return}
+ }catch(e){$("serverStatus").textContent=`Status check failed: ${e.message}`}
+ pollTimer=setTimeout(pollStatus,4000);
+}
+
+$("startCameraBtn").addEventListener("click",startCamera);$("startSweepBtn").addEventListener("click",runSweep);$("redoBtn").addEventListener("click",redo);$("nextBtn").addEventListener("click",next);$("downloadBtn").addEventListener("click",downloadPackage);$("submitBtn").addEventListener("click",submitScan);render();
