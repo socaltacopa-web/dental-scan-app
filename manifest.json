@@ -1,6 +1,6 @@
 {
   "name": "dental-scan-railway",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "entrypoint": "app.main:app",
   "healthcheck": "/health",
   "storage": "RAILWAY_VOLUME_MOUNT_PATH or DATA_DIR",
@@ -9,6 +9,8 @@
     "front-camera",
     "back-camera",
     "3d-reconstruction",
-    "railway-ready"
+    "railway-ready",
+    "ios-camera-device-selector",
+    "exact-deviceId-camera-switching"
   ]
 }

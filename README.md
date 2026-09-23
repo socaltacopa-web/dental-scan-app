@@ -184,3 +184,18 @@ data/
 10. better depth estimation and bundle adjustment
 
 For a prototype, keeping everything in one Railway service plus one persistent volume is the simplest deployment. For production, the processor should eventually move to a separate worker service or job queue so heavy 3D processing cannot block the main web application.
+
+
+## iPhone camera switching fix
+
+This revision changes camera selection for iOS/Safari:
+
+- asks for camera permission first,
+- enumerates the actual `videoinput` devices after permission is granted,
+- exposes a camera dropdown,
+- uses an exact `deviceId` when possible,
+- uses `facingMode: exact` before falling back to `facingMode: ideal`,
+- fully stops the old camera stream before opening the new one.
+
+On an iPhone Pro/Pro Max, Safari may expose several rear lenses plus one front camera.
+Choose the entry whose label includes `Front Camera` or `FaceTime` when available.

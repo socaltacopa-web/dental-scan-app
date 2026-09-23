@@ -54,13 +54,20 @@
     <div id="quality" class="quality">Start the camera.</div>
 
     <div class="camera-choice">
-      <div>
+      <div class="camera-choice-copy">
         <strong>Camera</strong>
         <span id="cameraModeLabel" class="muted">Back camera selected</span>
       </div>
-      <button id="switchCameraBtn" class="secondary" type="button">Use front camera</button>
+
+      <div class="camera-actions">
+        <select id="cameraSelect" aria-label="Choose camera">
+          <option value="environment">Back camera</option>
+          <option value="user">Front / selfie camera</option>
+        </select>
+        <button id="switchCameraBtn" class="secondary" type="button">Use front camera</button>
+      </div>
     </div>
-    <p class="camera-note">The back camera is recommended for sharper dental scans, but the front/selfie camera can be used too.</p>
+    <p class="camera-note">On iPhone, tap “Start camera” once so Safari can reveal the available cameras. Then choose Front / selfie camera if needed.</p>
 
     <div class="controls">
       <button id="startCameraBtn">Start camera</button>

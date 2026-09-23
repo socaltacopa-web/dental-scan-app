@@ -28,3 +28,24 @@ button.secondary{background:#283646}
 @media(max-width:560px){
   .camera-choice{align-items:stretch;flex-direction:column}
 }
+
+.camera-actions{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  flex-wrap:wrap
+}
+.camera-actions select{
+  min-width:180px;
+  padding:10px 12px;
+  border:1px solid #ccd4dd;
+  border-radius:10px;
+  background:white;
+  color:#14202b;
+  font:inherit
+}
+.camera-choice-copy{display:grid;gap:2px}
+@media(max-width:560px){
+  .camera-actions{display:grid;grid-template-columns:1fr}
+  .camera-actions select{width:100%}
+}

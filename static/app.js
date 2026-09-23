@@ -14,6 +14,8 @@ const sweeps=[
 const CAPTURE_SECONDS=7,FRAME_INTERVAL_MS=240,SELECTED=12,MAX_WIDTH=1280;
 let stream=null,step=0,capturing=false,loopId=null,prevGray=null,currentScanId=null,pollTimer=null;
 let cameraFacing="environment";
+let selectedDeviceId=null;
+let knownVideoDevices=[];
 const results={};
 const $=id=>document.getElementById(id),video=$("video"),overlay=$("overlay"),octx=overlay.getContext("2d"),work=$("work"),wctx=work.getContext("2d",{willReadFrequently:true});
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v)),sleep=ms=>new Promise(r=>setTimeout(r,ms));
@@ -25,82 +27,214 @@ function render(){
  updateCoverage();renderThumbs();const any=Object.keys(results).length>0;$("downloadBtn").disabled=!any;$("submitBtn").disabled=!any;
 }
 
+async function stopCurrentCamera(){
+ if(stream){
+  stream.getTracks().forEach(t=>t.stop());
+ }
+ stream=null;
+ video.pause();
+ video.srcObject=null;
+ prevGray=null;
+ await sleep(180);
+}
+
+function frontCameraCandidate(devices){
+ const preferred=devices.find(d=>/front|user|facetime|selfie/i.test(d.label||""));
+ return preferred||null;
+}
+
+function backCameraCandidate(devices){
+ const preferred=devices.find(d=>/back|rear|environment/i.test(d.label||""));
+ return preferred||null;
+}
+
+async function refreshCameraList(){
+ try{
+  const devices=await navigator.mediaDevices.enumerateDevices();
+  knownVideoDevices=devices.filter(d=>d.kind==="videoinput");
+
+  const select=$("cameraSelect");
+  const previous=select.value;
+  select.innerHTML="";
+
+  if(knownVideoDevices.length){
+   for(let i=0;i<knownVideoDevices.length;i++){
+    const d=knownVideoDevices[i];
+    const option=document.createElement("option");
+    option.value=d.deviceId;
+    option.textContent=d.label||`Camera ${i+1}`;
+    select.appendChild(option);
+   }
+
+   const desired=cameraFacing==="user"
+     ? frontCameraCandidate(knownVideoDevices)
+     : backCameraCandidate(knownVideoDevices);
+
+   if(desired){
+    select.value=desired.deviceId;
+    selectedDeviceId=desired.deviceId;
+   }else if(knownVideoDevices.some(d=>d.deviceId===previous)){
+    select.value=previous;
+    selectedDeviceId=previous;
+   }else{
+    selectedDeviceId=knownVideoDevices[0].deviceId;
+    select.value=selectedDeviceId;
+   }
+  }else{
+   select.innerHTML='<option value="environment">Back camera</option><option value="user">Front / selfie camera</option>';
+   select.value=cameraFacing;
+  }
+ }catch(e){
+  console.warn("Could not enumerate cameras",e);
+ }
+}
+
+async function openCameraWithConstraints(videoConstraints){
+ await stopCurrentCamera();
+
+ stream=await navigator.mediaDevices.getUserMedia({
+  video:videoConstraints,
+  audio:false
+ });
+
+ video.srcObject=stream;
+ await video.play();
+
+ const track=stream.getVideoTracks()[0];
+ const settings=track?.getSettings?.()||{};
+ return {track,settings};
+}
+
 async function startCamera(){
  try{
-  if(stream)stream.getTracks().forEach(t=>t.stop());
-  stream=null;
-  prevGray=null;
+  let opened=null;
 
-  const constraints={
-    video:{
-      facingMode:{ideal:cameraFacing},
-      width:{ideal:1920},
-      height:{ideal:1080}
-    },
-    audio:false
-  };
+  // If a specific iPhone camera was selected after permission was granted,
+  // prefer exact deviceId. This is more reliable than facingMode on iOS Safari.
+  if(selectedDeviceId && !["user","environment"].includes(selectedDeviceId)){
+   try{
+    opened=await openCameraWithConstraints({
+     deviceId:{exact:selectedDeviceId},
+     width:{ideal:1920},
+     height:{ideal:1080}
+    });
+   }catch(deviceErr){
+    console.warn("Exact device selection failed; falling back to facingMode",deviceErr);
+    selectedDeviceId=null;
+   }
+  }
 
-  stream=await navigator.mediaDevices.getUserMedia(constraints);
-  video.srcObject=stream;
-  await video.play();
+  if(!opened){
+   // Use exact facingMode first. iOS Safari sometimes ignores `ideal`.
+   try{
+    opened=await openCameraWithConstraints({
+     facingMode:{exact:cameraFacing},
+     width:{ideal:1920},
+     height:{ideal:1080}
+    });
+   }catch(exactErr){
+    console.warn("Exact facingMode failed; trying ideal",exactErr);
+    opened=await openCameraWithConstraints({
+     facingMode:{ideal:cameraFacing},
+     width:{ideal:1920},
+     height:{ideal:1080}
+    });
+   }
+  }
 
-  const track=stream.getVideoTracks()[0];
-  const settings=track?.getSettings?.()||{};
-  const actualFacing=settings.facingMode||cameraFacing;
+  await refreshCameraList();
 
-  document.querySelector(".camera-wrap").classList.toggle(
-    "front-camera",
-    actualFacing==="user" || cameraFacing==="user"
-  );
+  const settings=opened.settings||{};
+  const track=opened.track;
+  const label=(track?.label||"").toLowerCase();
+  const actualIsFront=
+    settings.facingMode==="user" ||
+    /front|facetime|selfie/.test(label) ||
+    cameraFacing==="user";
 
-  $("cameraModeLabel").textContent=
-    (actualFacing==="user" || cameraFacing==="user")
-      ? "Front/selfie camera selected"
-      : "Back camera selected";
+  document.querySelector(".camera-wrap").classList.toggle("front-camera",actualIsFront);
 
-  $("switchCameraBtn").textContent=
-    cameraFacing==="user"
-      ? "Use back camera"
-      : "Use front camera";
+  $("cameraModeLabel").textContent=actualIsFront
+    ? `Front/selfie camera active${track?.label ? ` — ${track.label}` : ""}`
+    : `Back camera active${track?.label ? ` — ${track.label}` : ""}`;
 
-  $("quality").textContent=
-    cameraFacing==="user"
-      ? "Front camera ready. For best 3D detail, use bright lighting and keep the phone steady."
-      : "Back camera ready. This is the recommended camera for dental scans.";
+  $("switchCameraBtn").textContent=actualIsFront
+    ? "Use back camera"
+    : "Use front camera";
+
+  $("quality").textContent=actualIsFront
+    ? "Front camera ready. Use bright lighting and keep the phone steady."
+    : "Back camera ready. This is recommended for the sharpest dental scan.";
 
   $("startSweepBtn").disabled=false;
   qualityLoop();
+
  }catch(e){
   console.error(e);
   $("quality").textContent=
-    "Camera failed. Allow camera access and use HTTPS. If this phone has only one camera available to the browser, switch back and try again.";
+    `Camera failed: ${e?.name||"error"}. Make sure Safari camera permission is allowed, then reload the page.`;
   $("startSweepBtn").disabled=true;
+ }
+}
+
+async function selectCameraFromDropdown(){
+ const value=$("cameraSelect").value;
+
+ if(value==="user" || value==="environment"){
+  cameraFacing=value;
+  selectedDeviceId=null;
+ }else{
+  selectedDeviceId=value;
+  const device=knownVideoDevices.find(d=>d.deviceId===value);
+  const label=(device?.label||"").toLowerCase();
+
+  if(/front|facetime|selfie/.test(label)) cameraFacing="user";
+  else if(/back|rear/.test(label)) cameraFacing="environment";
+ }
+
+ if(stream){
+  await startCamera();
  }
 }
 
 async function switchCamera(){
  if(capturing)return;
 
- cameraFacing=cameraFacing==="environment" ? "user" : "environment";
+ const devices=knownVideoDevices.length
+   ? knownVideoDevices
+   : (await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==="videoinput");
+
+ knownVideoDevices=devices;
+
+ const currentTrack=stream?.getVideoTracks?.()[0];
+ const currentLabel=(currentTrack?.label||"").toLowerCase();
+ const currentlyFront=
+   cameraFacing==="user" ||
+   /front|facetime|selfie/.test(currentLabel);
+
+ const targetFacing=currentlyFront ? "environment" : "user";
+ cameraFacing=targetFacing;
+
+ const candidate=targetFacing==="user"
+   ? frontCameraCandidate(devices)
+   : backCameraCandidate(devices);
+
+ selectedDeviceId=candidate?.deviceId||null;
+
+ if(candidate){
+  $("cameraSelect").value=candidate.deviceId;
+ }else if(
+  Array.from($("cameraSelect").options).some(o=>o.value===targetFacing)
+ ){
+  $("cameraSelect").value=targetFacing;
+ }
 
  $("cameraModeLabel").textContent=
-   cameraFacing==="user"
-     ? "Front/selfie camera selected"
-     : "Back camera selected";
+   targetFacing==="user"
+     ? "Switching to front/selfie camera…"
+     : "Switching to back camera…";
 
- $("switchCameraBtn").textContent=
-   cameraFacing==="user"
-     ? "Use back camera"
-     : "Use front camera";
-
- if(stream){
-   await startCamera();
- }else{
-   document.querySelector(".camera-wrap").classList.toggle(
-     "front-camera",
-     cameraFacing==="user"
-   );
- }
+ await startCamera();
 }
 
 function smallFrame(){
@@ -194,4 +328,4 @@ async function pollStatus(){
  pollTimer=setTimeout(pollStatus,4000);
 }
 
-$("startCameraBtn").addEventListener("click",startCamera);$("switchCameraBtn").addEventListener("click",switchCamera);$("startSweepBtn").addEventListener("click",runSweep);$("redoBtn").addEventListener("click",redo);$("nextBtn").addEventListener("click",next);$("downloadBtn").addEventListener("click",downloadPackage);$("submitBtn").addEventListener("click",submitScan);render();
+$("startCameraBtn").addEventListener("click",startCamera);$("switchCameraBtn").addEventListener("click",switchCamera);$("cameraSelect").addEventListener("change",selectCameraFromDropdown);$("startSweepBtn").addEventListener("click",runSweep);$("redoBtn").addEventListener("click",redo);$("nextBtn").addEventListener("click",next);$("downloadBtn").addEventListener("click",downloadPackage);$("submitBtn").addEventListener("click",submitScan);render();
