@@ -1,0 +1,21 @@
+{
+  "version": 4,
+  "files": [
+    "README.md",
+    "__pycache__",
+    "align_global.py",
+    "app.js",
+    "index.html",
+    "reconstruct_sweeps.py",
+    "requirements.txt",
+    "serve_local.py",
+    "styles.css",
+    "viewer.html"
+  ],
+  "main_steps": [
+    "Capture overlapping V4 sweeps",
+    "Run reconstruct_sweeps.py",
+    "Run align_global.py",
+    "Inspect merged_mouth.ply in viewer.html"
+  ]
+}

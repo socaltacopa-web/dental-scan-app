@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#ffffff" />
+  <title>Dental Scan V4</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="app">
+    <header>
+      <div>
+        <h1>Dental Scan V4</h1>
+        <p class="sub">Overlap-guided capture for local 3D reconstruction and global mouth alignment.</p>
+      </div>
+      <span class="prototype">Prototype</span>
+    </header>
+
+    <section class="card">
+      <div class="topline">
+        <div>
+          <strong id="stepLabel">Sweep 1 of 10</strong>
+          <div id="sweepTitle" class="title">Bite registration</div>
+        </div>
+        <span id="coverageBadge" class="badge">0% complete</span>
+      </div>
+
+      <progress id="progress" value="1" max="10"></progress>
+      <p id="sweepHint"></p>
+      <div id="overlapHint" class="overlap-hint"></div>
+
+      <div class="camera-wrap">
+        <video id="video" autoplay playsinline muted></video>
+        <canvas id="overlay"></canvas>
+        <canvas id="work" hidden></canvas>
+        <div class="scan-guide" aria-hidden="true"></div>
+        <div id="directionArrow" class="direction">→</div>
+        <div id="livePrompt" class="live-prompt">Start camera</div>
+        <div id="countdown" class="countdown" hidden></div>
+      </div>
+
+      <div class="metrics">
+        <div class="metric"><span>Lighting</span><progress id="lightMeter" max="100" value="0"></progress></div>
+        <div class="metric"><span>Sharpness</span><progress id="sharpMeter" max="100" value="0"></progress></div>
+        <div class="metric"><span>Teeth visible</span><progress id="teethMeter" max="100" value="0"></progress></div>
+        <div class="metric"><span>Movement</span><progress id="motionMeter" max="100" value="0"></progress></div>
+      </div>
+
+      <div id="quality" class="quality">Open the camera and position the teeth inside the guide.</div>
+
+      <div class="controls">
+        <button id="startCameraBtn">Start camera</button>
+        <button id="startSweepBtn" disabled>Start 7-second scan</button>
+        <button id="redoBtn" disabled>Redo this sweep</button>
+        <button id="nextBtn" disabled>Next sweep</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="topline">
+        <h2>Alignment coverage</h2>
+        <span id="bridgeStatus" class="muted">Bridge sweeps incomplete</span>
+      </div>
+      <div id="coverageGrid" class="coverage-grid"></div>
+    </section>
+
+    <section class="card">
+      <div class="topline">
+        <h2>Selected frames</h2>
+        <span id="frameCount" class="muted">0 frames</span>
+      </div>
+      <div id="thumbs" class="thumbs"></div>
+    </section>
+
+    <section class="card">
+      <h2>Export V4 reconstruction package</h2>
+      <p>
+        V4 adds deliberate overlap/bridge sweeps so separate 3D clouds have common tooth surfaces
+        that can be registered into one coordinate system.
+      </p>
+      <button id="exportBtn" disabled>Export V4 scan package</button>
+      <p class="fine">
+        Research prototype only. Do not use for diagnosis, treatment planning, restorations,
+        aligners, dentures, surgical guides, or any manufacturing workflow.
+      </p>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
