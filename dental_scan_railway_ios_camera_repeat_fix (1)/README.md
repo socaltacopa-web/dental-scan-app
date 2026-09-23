@@ -199,3 +199,20 @@ This revision changes camera selection for iOS/Safari:
 
 On an iPhone Pro/Pro Max, Safari may expose several rear lenses plus one front camera.
 Choose the entry whose label includes `Front Camera` or `FaceTime` when available.
+
+
+## iPhone repeated-switch fix (v0.1.3)
+
+This revision specifically addresses the case where the front camera works once
+but fails after switching cameras a second time.
+
+Changes:
+- cancels the live analysis animation loop before releasing the camera
+- stops every track and clears `video.srcObject`
+- waits briefly for iOS to release the camera hardware
+- does **not** reuse stale iOS device IDs when using the front/back switch button
+- reopens by requested facing direction first
+- tries multiple facing-mode constraint forms for Safari compatibility
+- locks the controls while a camera switch is in progress
+- automatically recovers a dead stream after returning from another app or lock screen
+- still keeps the explicit physical-camera dropdown for manual selection
